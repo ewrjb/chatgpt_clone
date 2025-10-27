@@ -42,8 +42,9 @@ async def print_history():
 
 def update_status(status_container, event):
     status_messages = {
-        "response.web_search_call.completed": ("Web serach completed.", "complete"),
-        "response.web_search_call.in_progress": ("Starting web search...", "running"),
+        "response.web_search_call.completed": ("✅ Web serach completed.", "complete"),
+        "response.web_search_call.in_progress": ("🔍 Starting web search...", "running"),
+        "response.web_search_call.searching": ("🔍 Web search in progrress...", "running"),
         "resposnse.completed": (" ", "complete"),
     }
 
@@ -55,7 +56,7 @@ asyncio.run(print_history())
 
 async def run_agent(message):
     with st.chat_message("ai"):
-        status_container = st.status("", expanded=False)
+        status_container = st.status("⏳", expanded=False)
         text_placeholder = st.empty()
         response = ""
 
