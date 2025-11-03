@@ -16,62 +16,11 @@ from agents import (
     CodeInterpreterTool,
     HostedMCPTool,
 )
+from agents.mcp.server import MCPServerStdio
 
 client = OpenAI()
 
 VECTOR_STORE_ID = os.getenv("VECTOR_STORE_ID")
-
-if "agent" not in st.session_state:
-    st.session_state["agent"] = Agent(
-        name="ChatGPT Clone",
-        instructions="""
-        You are a helpful AI assitant. Engage in a friendly and informative manner.
-        You have access to follwing tools:
-            - Web Search Tool: Use this tool to search the web for up-to-date information. \
-                Always use the tools when necessary to answer the user's questions accurately.
-            - File Search Tool: Use this tool to search the contents of files in a vector store. \
-                Use this tool when the user asks about specific documents or files.
-            - Image Generation Tool: Use this tool to generate images based on user descriptions. \
-                Use this tool when the user requests images or visual content.
-            - Code Interpreter Tool: Use this tool when you \
-                need to write and run code to answer the user's question.
-            - Hosted MCP Tool: Use this tool to access additional functionalities provided by the hosted MCP service.
-        Always provide accurate and concise responses to the user's queries.
-        """,
-        tools=[
-            WebSearchTool(),
-            FileSearchTool(
-                vector_store_ids=[VECTOR_STORE_ID],
-                max_num_results=3,
-            ),
-            ImageGenerationTool(
-                tool_config={
-                    "type": "image_generation",
-                    "quality": "auto",
-                    "output_format": "jpeg",
-                    "partial_images": 1,
-                }
-            ),
-            CodeInterpreterTool(
-                tool_config={
-                    "type": "code_interpreter",
-                    "container": {
-                        "type": "auto",
-                    },
-                }
-            ),
-            HostedMCPTool(
-                tool_config={
-                    "server_url": "https://mcp.context7.com/mcp",
-                    "type": "mcp",
-                    "server_label": "Context7",
-                    "server_description": "Use this to get the docs from software projects.",
-                    "require_approval": "never",
-                }
-            ),
-        ],
-    )
-agent = st.session_state["agent"]
 
 if "session" not in st.session_state:
     st.session_state["session"] = SQLiteSession(
@@ -114,10 +63,10 @@ async def print_history():
                     st.code(message["code"])
             elif message_type == "mcp_list_tools":
                 with st.chat_message("ai"):
-                    st.write(f"Listed {message["server_label"]}'s tools")
+                    st.write(f"Listed {message['server_label']}'s tools")
             elif message_type == "mcp_call":
                 with st.chat_message("ai"):
-                    st.write(f"Called {message["server_label"]}'s {message["name"]} with args {message["arguments"]}")
+                    st.write(f"Called {message['server_label']}'s {message['name']} with args {message['arguments']}")
 
 asyncio.run(print_history())
 
@@ -198,40 +147,106 @@ def update_status(status_container, event):
         label, state = status_messages[event]
         status_container.update(label=label, state=state)
 
-
 async def run_agent(message):
-    with st.chat_message("ai"):
-        status_container = st.status("⏳", expanded=False)
-        code_placeholder = st.empty()
-        image_placeholder = st.empty()
-        text_placeholder = st.empty()
-        
-        response = ""
-        code_response = ""
+    yfinance_server = MCPServerStdio(
+        params={
+            "command": "uvx",
+            "args": ["mcp-yahoo-finance"],
+        },
+        cache_tools_list=True,
+        client_session_timeout_seconds = 60,
+    )
 
-        st.session_state["code_placeholder"] = code_placeholder
-        st.session_state["image_placeholder"] = image_placeholder
-        st.session_state["text_placeholder"] = text_placeholder
-
-        stream = Runner.run_streamed(
-            agent,
-            message,
-            session=session,
+    async with yfinance_server:
+        agent = Agent(
+            mcp_servers=[
+                yfinance_server,
+            ],
+            name="ChatGPT Clone",
+            instructions="""
+            You are a helpful AI assitant. Engage in a friendly and informative manner.
+            You have access to follwing tools:
+                - Web Search Tool: Use this tool to search the web for up-to-date information. \
+                    Always use the tools when necessary to answer the user's questions accurately.
+                - File Search Tool: Use this tool to search the contents of files in a vector store. \
+                    Use this tool when the user asks about specific documents or files.
+                - Image Generation Tool: Use this tool to generate images based on user descriptions. \
+                    Use this tool when the user requests images or visual content.
+                - Code Interpreter Tool: Use this tool when you \
+                    need to write and run code to answer the user's question.
+                - Hosted MCP Tool: Use this tool to access additional functionalities provided by the hosted MCP service.
+            Always provide accurate and concise responses to the user's queries.
+            """,
+            tools=[
+                WebSearchTool(),
+                FileSearchTool(
+                    vector_store_ids=[VECTOR_STORE_ID],
+                    max_num_results=3,
+                ),
+                ImageGenerationTool(
+                    tool_config={
+                        "type": "image_generation",
+                        "quality": "auto",
+                        "output_format": "jpeg",
+                        "partial_images": 1,
+                    }
+                ),
+                CodeInterpreterTool(
+                    tool_config={
+                        "type": "code_interpreter",
+                        "container": {
+                            "type": "auto",
+                        },
+                    }
+                ),
+                HostedMCPTool(
+                    tool_config={
+                        "server_url": "https://mcp.context7.com/mcp",
+                        "type": "mcp",
+                        "server_label": "Context7",
+                        "server_description": "Use this to get the docs from software projects.",
+                        "require_approval": "never",
+                    }
+                ),
+            ],
         )
 
-        async for event in stream.stream_events():
-            if event.type == "raw_response_event":
-                update_status(status_container, event.data.type)
-                if event.data.type == "response.output_text.delta":
-                    response += event.data.delta
-                    text_placeholder.write(response.replace("$", "\$")) # streamlit bug when print numbers
-                if event.data.type == "response.code_interpreter_call_code.delta":
-                    code_response += event.data.delta
-                    code_placeholder.code(code_response)
+        with st.chat_message("ai"):
+            status_container = st.status("⏳", expanded=False)
+            code_placeholder = st.empty()
+            image_placeholder = st.empty()
+            text_placeholder = st.empty()
+            
+            response = ""
+            code_response = ""
+
+            st.session_state["code_placeholder"] = code_placeholder
+            st.session_state["image_placeholder"] = image_placeholder
+            st.session_state["text_placeholder"] = text_placeholder
+
+            stream = Runner.run_streamed(
+                agent,
+                message,
+                session=session,
+            )
+
+            async for event in stream.stream_events():
+                if event.type == "raw_response_event":
+
+                    update_status(status_container, event.
+                    data.type)
                     
-                elif event.data.type == "response.image_generation_call.partial_image":
-                    image = base64.b64decode(event.data.partial_image_b64)
-                    image_placeholder.image(image)
+                    if event.data.type == "response.output_text.delta":
+                        response += event.data.delta
+                        text_placeholder.write(response.replace("$", "\$")) # streamlit bug when print numbers
+                    if event.data.type == "response.code_interpreter_call_code.delta":
+                        code_response += event.data.delta
+                        code_placeholder.code(code_response)
+                        
+                    elif event.data.type == "response.image_generation_call.partial_image":
+                        image = base64.b64decode(event.data.partial_image_b64)
+                        image_placeholder.image(image)
+
 
 prompt = st.chat_input(
     "Write a message for your assistant",
